@@ -80,10 +80,13 @@
                 await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ msg: text })
+                    body: JSON.stringify({ msg: text }),
+                    // 👇 就加这一行！强制携带 Cookie（解决所有问题）
+                    credentials: 'include'
                 });
             }
 
+<<<<<<< HEAD
             //监听 SSE 消息（AI回复从这里进来）
             const es = new EventSource('/queue/stream');
             es.onmessage = function(e) {
@@ -96,6 +99,33 @@
                     addMsg('agent', e.data);
                 }
             };
+=======
+            // ==============================
+            // 只改这里：WebSocket 自动连接
+            // 无硬编码！同端口！同域名！
+            // ==============================
+            const ws = new WebSocket(`ws://${location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log("连接成功！");
+            };
+
+            ws.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                if ("waiting" in data) {
+                    document.getElementById('queue-status').textContent = `当前排队：${data.waiting}`;
+                } else if ("text" in data || "images" in data) {
+                    addMsg("agent", data.text || "", data.images || []);
+                    // 触发安卓通知
+                    if(window.AndroidNotify) AndroidNotify.notifyMsg(data.text || "收到新消息");
+                }
+            } catch (err) {
+                addMsg("agent", e.data);
+            }
+        };
+
+>>>>>>> 835ab36 (安卓app适配)
         </script>
 
         <button onclick="logout()">切换用户/退出登录</button>

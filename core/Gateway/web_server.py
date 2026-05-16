@@ -2,6 +2,8 @@ from flask import Flask, request, render_template, redirect, url_for, session, R
 import queue
 import requests
 import json
+import threading
+from flask_sock import Sock
 
 # 加载配置
 with open("config/gateway_setting.json", "r", encoding="utf-8") as f:
@@ -13,59 +15,70 @@ WEB_PORT = CONFIG["channels"]["web"]["self_port"]  # 5201
 
 app = Flask("user_web")
 app.secret_key = "123"
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False
+sock = Sock(app)
 
-# ============================
-# 用户消息队列（SSE推送用）
-# ============================
-user_streams = {}
+connected_users = {}
 
-# ============================
-# 你的网页路由（完全保留）
-# ============================
+# ======================
+# 纯原生打印 无任何拼接
+# ======================
+def print_full_request(route_name):
+    # 直接打印 不拼接字符串
+    print("=== 【 】 完整请求 ===")
+    print(route_name)
+    print(request)
+    print(request.method)
+    print(request.url)
+    print(request.remote_addr)
+    print(session)
+    print(request.cookies)
+    print(request.headers)
+    print(request.form)
+    print(request.get_json(silent=True))
+    print("="*50)
+
+# ------------------------------
+# 路由
+# ------------------------------
 @app.route('/')
+def index():
+    print_full_request("首页 /")
+    if not session.get("user_id"):
+        return redirect("/login")
+    return redirect("/chat")
+
+@app.route('/login')
 def login():
+    print_full_request("登录页 /login")
     return render_template("login.html")
 
 @app.route('/do_login', methods=['POST'])
 def do_login():
-    session['user_id'] = request.form.get('user_id')
-    return redirect(url_for('chat_page'))
+    print_full_request("登录提交 /do_login")
+    user_id = request.form.get("user_id")
+    session["user_id"] = user_id
+    return redirect("/chat")
 
 @app.route('/chat')
-def chat_page():
+def chat():
+    print_full_request("聊天页 /chat")
     if not session.get("user_id"):
         return redirect('/')
     return render_template("chat.html")
 
-# ============================
-# ✅ 修复 404：SSE 推送接口
-# ============================
-@app.route('/queue/stream')
-def queue_stream():
+# ------------------------------
+# 发送消息
+# ------------------------------
+@app.route('/chat', methods=['POST'])
+def send_chat():
+    print_full_request("发送消息 /chat POST")
     user_id = session.get("user_id")
     if not user_id:
         return "", 401
 
-    q = queue.Queue()
-    user_streams[user_id] = q
-
-    def gen():
-        while True:
-            msg = q.get()
-            msg = msg.replace('\n', '\\n')
-            yield f"data: {msg}\n\n"
-
-    return Response(gen(), mimetype="text/event-stream")
-
-# ============================
-# ✅ 发送消息到 main（5000）
-# ============================
-@app.route('/chat', methods=['POST'])
-def chat():
-    user_id = session.get("user_id")
-    msg = request.json.get("msg")
-
-    # 发送给 main
+    import requests
     requests.post(f"http://{MAIN_HOST}:{MAIN_PORT}/submit_task", json={
         "user_id": user_id,
         "content": msg,
@@ -75,17 +88,54 @@ def chat():
 
     return jsonify(ok=1)
 
-# ============================
-# ✅ 接收 main 回调 → 推送给网页
-# ============================
-@app.route("/send", methods=["POST"])
-def receive_from_main():
+# ------------------------------
+# WebSocket 原生打印
+# ------------------------------
+@sock.route('/ws')
+def ws(ws):
+    # 直接打印 无拼接
+    print("=== WebSocket 连接 ===")
+    print(session)
+    print(request.cookies)
+    print("="*50)
+
+    user_id = session.get("user_id")
+    if not user_id:
+        return
+
+    connected_users[user_id] = ws
+    print("[web] ", user_id, " 已连接")
+
+    try:
+        while True:
+            ws.receive()
+    except:
+        pass
+    finally:
+        if user_id in connected_users:
+            del connected_users[user_id]
+
+# ------------------------------
+# 推送消息
+# ------------------------------
+@app.route('/send', methods=['POST'])
+def push_msg():
+    print_full_request("消息推送 /send")
     data = request.json
     user_id = data.get("user_id")
     text = data.get("text")
 
-    if user_id in user_streams:
-        user_streams[user_id].put(text)
+    if user_id in connected_users:
+        try:
+            connected_users[user_id].send(json.dumps(data, ensure_ascii=False))
+        except:
+            pass
+
+    try:
+        import requests
+        requests.post(f"http://127.0.0.1:{WEB_PORT+1}/forward", json=data)
+    except:
+        pass
 
     return jsonify(ok=1)
 
