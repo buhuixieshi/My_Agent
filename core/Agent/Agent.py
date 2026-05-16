@@ -196,23 +196,26 @@ class Agent:
         self.config = all_config[self.id]
 
     def build_system_prompt(self):
-        """构建系统提示词（源代码完全保留）"""
         prompt_dir = self.BASE_ROOT_DIR / "system_prompt" / self.id
-        global_setting = self.BASE_ROOT_DIR / "system_prompt" /"GLOBAL_SETTING.md"
+        global_setting = self.BASE_ROOT_DIR / "system_prompt" / "GLOBAL_SETTING.md"
 
-        parts = []
+        system_messages = []
 
-        # 读取全局设置
+        # 1. 全局设置 → 第一条 system
         with open(global_setting, "r", encoding="utf-8") as f:
-            parts.append(f.read().strip())
+            content = f.read().strip()
+            if content:
+                system_messages.append({"role": "system", "content": content})
 
-        # 读取智能体专属文件
+        # 2. 智能体专属文件（soul / tool 等）
         for filename in self.config.get("files", []):
             file_path = prompt_dir / filename
             with open(file_path, "r", encoding="utf-8") as f:
-                parts.append(f.read().strip())
+                content = f.read().strip()
+                if content:
+                    system_messages.append({"role": "system", "content": content})
 
-        self.system_prompt = "\n\n".join(parts)
+        self.system_prompt = system_messages
 
     # ==================== 核心对话流程 ====================
     def send(self, task):
@@ -234,12 +237,20 @@ class Agent:
         # 2. 同步获取上下文
         context = self.get_context_sync(content)
 
-        # 1. 添加用户输入到历史
-        messages = [{"role": "system", "content": self.system_prompt}] + context
-        messages += [{"role": "system", "content": "以下为本次请求对话，请着重于下面部分\n下面是该任务用户原始请求"}] + [
-            {"role": "user", "content": f"<{task.user.id}>" + task.content},
-            {"role": "system", "content": "以下为本次单轮对话内容"},
-            {"role": "user", "content": f"<{task.caller.id}>" + content}]
+        # 3.环境提示词
+        system_prompt_messages = self.system_prompt
+
+        # 4.任务记忆(仅main)
+        task_memory_messages=[]
+        if self.id == "main":
+            task_memory="以下是你在本次任务中的记忆:"
+            for i in task.main_memory:
+                task_memory+="\n"+i
+            task_memory_messages = [{"role": "system", "content": task_memory }]
+        # 5.用户原始请求
+        user_input_messages = [{"role": "system", "content": "以下为本次请求对话，请着重于下面部分\n下面是该任务用户原始请求"},{"role": "user", "content": f"<{task.user.id}>" + task.content}]
+        #目前的对话内容构成 viking记忆(长期记忆+session记忆)+任务记忆(仅main)+环境提示词+用户原始请求+本次单轮对话请求(用户原始请求/自己的上次请求+回复内容/工具调用过程)
+        messages=long_context_message+task_memory_messages+system_prompt_messages+user_input_messages+current_input_messages
         # 2. 调用大模型
         # 读取配置
         api_url = self.config["api_url"]
