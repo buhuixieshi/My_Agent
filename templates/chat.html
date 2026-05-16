@@ -98,7 +98,9 @@
                 await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ msg: text })
+                    body: JSON.stringify({ msg: text }),
+                    // 👇 就加这一行！强制携带 Cookie（解决所有问题）
+                    credentials: 'include'
                 });
             }
 
@@ -113,17 +115,19 @@
             };
 
             ws.onmessage = (e) => {
-                try {
-                    const data = JSON.parse(e.data);
-                    if ("waiting" in data) {
-                        document.getElementById('queue-status').textContent = `当前排队：${data.waiting}`;
-                    } else if ("text" in data || "images" in data) {
-                        addMsg("agent", data.text || "", data.images || []);
-                    }
-                } catch (err) {
-                    addMsg("agent", e.data);
+            try {
+                const data = JSON.parse(e.data);
+                if ("waiting" in data) {
+                    document.getElementById('queue-status').textContent = `当前排队：${data.waiting}`;
+                } else if ("text" in data || "images" in data) {
+                    addMsg("agent", data.text || "", data.images || []);
+                    // 触发安卓通知
+                    if(window.AndroidNotify) AndroidNotify.notifyMsg(data.text || "收到新消息");
                 }
-            };
+            } catch (err) {
+                addMsg("agent", e.data);
+            }
+        };
 
         </script>
 

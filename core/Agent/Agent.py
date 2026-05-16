@@ -260,23 +260,26 @@ class Agent:
         self.config = all_config[self.id]
 
     def build_system_prompt(self):
-        """构建系统提示词（源代码完全保留）"""
         prompt_dir = self.BASE_ROOT_DIR / "system_prompt" / self.id
-        global_setting = self.BASE_ROOT_DIR / "system_prompt" /"GLOBAL_SETTING.md"
+        global_setting = self.BASE_ROOT_DIR / "system_prompt" / "GLOBAL_SETTING.md"
 
-        parts = []
+        system_messages = []
 
-        # 读取全局设置
+        # 1. 全局设置 → 第一条 system
         with open(global_setting, "r", encoding="utf-8") as f:
-            parts.append(f.read().strip())
+            content = f.read().strip()
+            if content:
+                system_messages.append({"role": "system", "content": content})
 
-        # 读取智能体专属文件
+        # 2. 智能体专属文件（soul / tool 等）
         for filename in self.config.get("files", []):
             file_path = prompt_dir / filename
             with open(file_path, "r", encoding="utf-8") as f:
-                parts.append(f.read().strip())
+                content = f.read().strip()
+                if content:
+                    system_messages.append({"role": "system", "content": content})
 
-        self.system_prompt = "\n\n".join(parts)
+        self.system_prompt = system_messages
 
     # ==================== 核心对话流程 ====================
     def send(self, task):
@@ -303,7 +306,7 @@ class Agent:
         long_context_message =[{"role": "system","content": "以下是你和用户的历史对话记录，请根据上下文继续回答"}]+self.get_context_sync(content)
 
         # 3.环境提示词
-        system_prompt_messages = [{"role": "system", "content": self.system_prompt}]
+        system_prompt_messages = self.system_prompt
 
         # 4.任务记忆(仅main)
         task_memory_messages=[]

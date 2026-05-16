@@ -1,11 +1,9 @@
 from flask import Flask, request, render_template, session, jsonify, redirect
 import json
-import asyncio
-import websockets
 import threading
 from flask_sock import Sock
 
-# 加载你的配置（完全不变！）
+# 加载配置
 with open("config/gateway_setting.json", "r", encoding="utf-8") as f:
     CONFIG = json.load(f)
 
@@ -13,48 +11,70 @@ MAIN_HOST = CONFIG["main"]["host"]
 MAIN_PORT = CONFIG["main"]["port"]
 WEB_PORT = CONFIG["channels"]["web"]["self_port"]
 
-# Flask + WebSocket 单端口（不冲突！）
 app = Flask("user_web")
 app.secret_key = "123"
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False
 sock = Sock(app)
 
-# 在线用户
 connected_users = {}
 
+# ======================
+# 纯原生打印 无任何拼接
+# ======================
+def print_full_request(route_name):
+    # 直接打印 不拼接字符串
+    print("=== 【 】 完整请求 ===")
+    print(route_name)
+    print(request)
+    print(request.method)
+    print(request.url)
+    print(request.remote_addr)
+    print(session)
+    print(request.cookies)
+    print(request.headers)
+    print(request.form)
+    print(request.get_json(silent=True))
+    print("="*50)
+
 # ------------------------------
-# 页面路由（完全不变）
+# 路由
 # ------------------------------
 @app.route('/')
 def index():
+    print_full_request("首页 /")
     if not session.get("user_id"):
         return redirect("/login")
     return redirect("/chat")
 
 @app.route('/login')
 def login():
+    print_full_request("登录页 /login")
     return render_template("login.html")
 
 @app.route('/do_login', methods=['POST'])
 def do_login():
+    print_full_request("登录提交 /do_login")
     user_id = request.form.get("user_id")
     session["user_id"] = user_id
     return redirect("/chat")
 
 @app.route('/chat')
 def chat():
+    print_full_request("聊天页 /chat")
     if not session.get("user_id"):
         return redirect("/login")
     return render_template("chat.html")
 
 # ------------------------------
-# 发送消息给AI（完全不变）
+# 发送消息
 # ------------------------------
 @app.route('/chat', methods=['POST'])
 def send_chat():
+    print_full_request("发送消息 /chat POST")
     user_id = session.get("user_id")
     text = request.json.get("msg")
 
-    # 发给你的main服务（不变）
     import requests
     requests.post(f"http://{MAIN_HOST}:{MAIN_PORT}/submit_task", json={
         "user_id": user_id,
@@ -65,16 +85,22 @@ def send_chat():
     return jsonify(ok=1)
 
 # ------------------------------
-# 单端口 WebSocket（不冲突！）
+# WebSocket 原生打印
 # ------------------------------
 @sock.route('/ws')
 def ws(ws):
+    # 直接打印 无拼接
+    print("=== WebSocket 连接 ===")
+    print(session)
+    print(request.cookies)
+    print("="*50)
+
     user_id = session.get("user_id")
     if not user_id:
         return
 
     connected_users[user_id] = ws
-    print(f"[web] {user_id} 已连接")
+    print("[web] ", user_id, " 已连接")
 
     try:
         while True:
@@ -86,10 +112,11 @@ def ws(ws):
             del connected_users[user_id]
 
 # ------------------------------
-# main服务回调：推送消息
+# 推送消息
 # ------------------------------
 @app.route('/send', methods=['POST'])
 def push_msg():
+    print_full_request("消息推送 /send")
     data = request.json
     user_id = data.get("user_id")
 
@@ -99,12 +126,11 @@ def push_msg():
         except:
             pass
 
-        try:
-            import requests
-            requests.post(f"http://127.0.0.1:{WEB_PORT+1}/forward", json=data)
-        except:
-            pass
-
+    try:
+        import requests
+        requests.post(f"http://127.0.0.1:{WEB_PORT+1}/forward", json=data)
+    except:
+        pass
 
     return jsonify(ok=1)
 
